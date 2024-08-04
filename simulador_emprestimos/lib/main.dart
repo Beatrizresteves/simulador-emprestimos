@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 void main() {
   runApp(SimuladorEmprestimosApp());
@@ -32,6 +34,7 @@ class _SimuladorEmprestimosPageState extends State<SimuladorEmprestimosPage> {
   List<String> _selectedInstituicoes = [];
   List<String> _selectedConvenios = [];
   int _selectedParcela = 36;
+  String? _resultadoSimulacao;
 
   @override
   void initState() {
@@ -58,21 +61,46 @@ class _SimuladorEmprestimosPageState extends State<SimuladorEmprestimosPage> {
     });
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     if (_formKey.currentState!.validate()) {
-      final valorEmprestimo = double.parse(_valorController.text.replaceAll(',', '.'));
-      final instituicoes = _selectedInstituicoes;
-      final convenios = _selectedConvenios;
-      final parcela = _selectedParcela;
+      try {
+        // Remove R$ e converte para double
+        final valorString = _valorController.text.replaceAll(r'R$', '').replaceAll('.', '').replaceAll(',', '.');
+        final valorEmprestimo = double.parse(valorString);
+        final instituicoes = _selectedInstituicoes;
+        final convenios = _selectedConvenios;
+        final parcela = _selectedParcela;
 
-      // Enviar os dados para a API na rota /api/simular
-      // Por exemplo, http.post('HOST/api/simular', body: {...})
-      // E processar a resposta
+        // Enviar os dados para a API na rota /api/simular
+        final response = await http.post(
+          Uri.parse('http://localhost:8000/api/simular'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'valorEmprestimo': valorEmprestimo,
+            'instituicoes': instituicoes,
+            'convenios': convenios,
+            'parcelas': parcela,
+          }),
+        );
 
-      print('Valor do Empréstimo: $valorEmprestimo');
-      print('Instituições: $instituicoes');
-      print('Convênios: $convenios');
-      print('Parcelas: $parcela');
+        if (response.statusCode == 200) {
+          // Processar a resposta da API
+          final responseData = json.decode(response.body);
+          setState(() {
+            _resultadoSimulacao = responseData['resultado']; // Ajuste conforme o formato da resposta da sua API
+          });
+        } else {
+          // Tratar erros na resposta da API
+          setState(() {
+            _resultadoSimulacao = 'Erro na simulação. Tente novamente.';
+          });
+        }
+      } catch (e) {
+        print('Erro ao converter o valor: $e');
+        setState(() {
+          _resultadoSimulacao = 'Erro ao converter o valor. Verifique o formato.';
+        });
+      }
     }
   }
 
@@ -164,6 +192,18 @@ class _SimuladorEmprestimosPageState extends State<SimuladorEmprestimosPage> {
                 onPressed: _submitForm,
                 child: Text('Simular'),
               ),
+              if (_resultadoSimulacao != null) ...[
+                SizedBox(height: 32.0),
+                Text(
+                  'Resultado da Simulação:',
+                  style: TextStyle(fontSize: 18.0, fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 16.0),
+                Text(
+                  _resultadoSimulacao!,
+                  style: TextStyle(fontSize: 16.0),
+                ),
+              ],
             ],
           ),
         ),
@@ -179,13 +219,18 @@ class CurrencyTextInputFormatter extends TextInputFormatter {
       return newValue.copyWith(text: '');
     }
 
-    final int value = int.parse(newValue.text.replaceAll(',', '').replaceAll('.', ''));
-    final formatter = NumberFormat.simpleCurrency(locale: 'pt_BR', decimalDigits: 2);
-    final newText = formatter.format(value / 100);
-
-    return newValue.copyWith(
-      text: newText,
-      selection: TextSelection.collapsed(offset: newText.length),
-    );
+    String text = newValue.text;
+    text = text.replaceAll('.', '');
+    text = text.replaceAll(',', '.');
+    if (text.isNotEmpty) {
+      final doubleValue = double.tryParse(text) ?? 0;
+      final formatter = NumberFormat.simpleCurrency(locale: 'pt_BR', decimalDigits: 2);
+      final newText = formatter.format(doubleValue);
+      return newValue.copyWith(
+        text: newText,
+        selection: TextSelection.collapsed(offset: newText.length),
+      );
+    }
+    return newValue;
   }
 }
